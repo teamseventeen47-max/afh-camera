@@ -280,98 +280,78 @@
     // LOAD FACIAL RECOGNITION MODEL
     // ==========================================
 
-    async function loadModel() {
+    
+async function loadModel() {
 
-      if (human) {
+  if (human) return human;
 
-        return human;
+  const HumanAPI = window.Human;
 
+  // Support both browser export formats.
+  let HumanConstructor = null;
+
+  if (typeof HumanAPI === 'function') {
+    HumanConstructor = HumanAPI;
+  } else if (
+    HumanAPI &&
+    typeof HumanAPI.Human === 'function'
+  ) {
+    HumanConstructor = HumanAPI.Human;
+  } else if (
+    HumanAPI &&
+    typeof HumanAPI.default === 'function'
+  ) {
+    HumanConstructor = HumanAPI.default;
+  }
+
+  if (!HumanConstructor) {
+    throw new Error(
+      'Human library constructor unavailable. ' +
+      'Library type: ' + typeof HumanAPI
+    );
+  }
+
+  setStatus(
+    'Loading facial recognition model...',
+    'loading'
+  );
+
+  human = new HumanConstructor({
+
+    backend: 'webgl',
+
+    modelBasePath:
+      'https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/models/',
+
+    face: {
+      enabled: true,
+
+      detector: {
+        rotation: true,
+        return: true
+      },
+
+      mesh: {
+        enabled: true
+      },
+
+      description: {
+        enabled: true
       }
+    },
 
+    body: { enabled: false },
+    hand: { enabled: false },
+    object: { enabled: false },
+    gesture: { enabled: false }
 
-      if (typeof Human === 'undefined') {
+  });
 
-        throw new Error(
-          'Facial recognition library failed to load. Check your internet connection and refresh.'
-        );
+  await human.load();
+  await human.warmup();
 
-      }
-
-
-      setStatus(
-        'Loading facial recognition model. Please wait...',
-        'loading'
-      );
-
-
-      human = new Human.Human({
-
-        backend: 'webgl',
-
-        modelBasePath:
-          'https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/models/',
-
-        face: {
-
-          enabled: true,
-
-          detector: {
-
-            rotation: true,
-
-            return: true
-
-          },
-
-          mesh: {
-
-            enabled: true
-
-          },
-
-          description: {
-
-            enabled: true
-
-          }
-
-        },
-
-        body: {
-
-          enabled: false
-
-        },
-
-        hand: {
-
-          enabled: false
-
-        },
-
-        object: {
-
-          enabled: false
-
-        },
-
-        gesture: {
-
-          enabled: false
-
-        }
-
-      });
-
-
-      await human.load();
-
-      await human.warmup();
-
-
-      return human;
-
-    }
+  return human;
+}
 
 
     // ==========================================
