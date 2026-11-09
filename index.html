@@ -1,1 +1,652 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AFH Facial Verification</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 25px;
+      background: #f3f6f3;
+      color: #20352d;
+      font-family: Arial, sans-serif;
+    }
+
+    .container {
+      max-width: 850px;
+      margin: 30px auto;
+      padding: 25px;
+      background: white;
+      border: 1px solid #e1e9e2;
+      border-radius: 14px;
+    }
+
+    h2 {
+      margin-top: 0;
+      color: #14513f;
+    }
+
+    .description {
+      color: #718078;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .camera {
+      width: 100%;
+      max-width: 600px;
+      min-height: 300px;
+      margin: 20px auto;
+      overflow: hidden;
+      background: #17251e;
+      border-radius: 12px;
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      min-height: 300px;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    .status {
+      padding: 13px;
+      margin: 15px 0;
+      border-radius: 8px;
+      background: #eaf3ed;
+      color: #14513f;
+      font-size: 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .error {
+      background: #fff0ef;
+      color: #b42318;
+    }
+
+    button {
+      padding: 12px 18px;
+      margin: 5px;
+      border: 0;
+      border-radius: 8px;
+      background: #14513f;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #e8efea;
+      color: #14513f;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .small {
+      color: #718078;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <h2>Aunty Fajar Harapan</h2>
+
+  <h3>Facial Verification</h3>
+
+  <p class="description" id="instructions">
+    Preparing your facial verification session...
+  </p>
+
+  <div class="camera">
+    <video id="video" autoplay muted playsinline></video>
+  </div>
+
+  <div class="status" id="status">
+    Initialising camera verification...
+  </div>
+
+  <div class="actions">
+
+    <button id="startButton" type="button">
+      Start Camera
+    </button>
+
+    <button id="verifyButton" type="button" disabled>
+      Verify My Face
+    </button>
+
+    <button id="stopButton" class="secondary" type="button">
+      Stop Camera
+    </button>
+
+  </div>
+
+  <p class="small">
+    Your face descriptor will be returned to the original
+    Aunty Fajar Harapan HR page for verification.
+
+    This is an experimental attendance aid, not
+    spoof-proof biometric authentication.
+  </p>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/dist/human.js"></script>
+
+<script>
+
+const ALLOWED_PARENT_ORIGIN = location.origin;
+
+const params = new URLSearchParams(location.search);
+
+const MODE = params.get('mode') || '';
+
+const ACTION = params.get('action') || '';
+
+const video = document.getElementById('video');
+
+const statusBox = document.getElementById('status');
+
+const startButton = document.getElementById('startButton');
+
+const verifyButton = document.getElementById('verifyButton');
+
+const stopButton = document.getElementById('stopButton');
+
+let stream = null;
+
+let humanModel = null;
+
+let busy = false;
+
+
+// ==================================================
+// STATUS
+// ==================================================
+
+function setStatus(message, error) {
+
+  statusBox.textContent = message;
+
+  statusBox.className = error
+    ? 'status error'
+    : 'status';
+
+}
+
+
+// ==================================================
+// CHECK PARENT WINDOW
+// ==================================================
+
+function checkRequest() {
+
+  if (!window.opener || window.opener.closed) {
+
+    setStatus(
+      'Please open this page from the Aunty Fajar Harapan HR module.',
+      true
+    );
+
+    startButton.disabled = true;
+
+    return false;
+
+  }
+
+  if (!['register', 'attendance'].includes(MODE)) {
+
+    setStatus('Invalid verification request.', true);
+
+    startButton.disabled = true;
+
+    return false;
+
+  }
+
+  if (
+    MODE === 'attendance' &&
+    !['Clock In', 'Clock Out'].includes(ACTION)
+  ) {
+
+    setStatus('Invalid attendance action.', true);
+
+    startButton.disabled = true;
+
+    return false;
+
+  }
+
+  return true;
+
+}
+
+
+// ==================================================
+// CAMERA
+// ==================================================
+
+async function startCamera() {
+
+  try {
+
+    if (!checkRequest()) return;
+
+    if (!navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia) {
+
+      throw new Error(
+        'Camera access is unavailable. Open this page using HTTPS.'
+      );
+
+    }
+
+    setStatus('Requesting camera permission...');
+
+    stream = await navigator.mediaDevices.getUserMedia({
+
+      video: {
+        facingMode: 'user',
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      },
+
+      audio: false
+
+    });
+
+    video.srcObject = stream;
+
+    await video.play();
+
+    setStatus('Camera started. Loading facial-recognition model...');
+
+    await loadModel();
+
+    verifyButton.disabled = false;
+
+    setStatus(
+      'Camera ready. Position your face clearly in the frame.'
+    );
+
+  } catch (error) {
+
+    stopCamera();
+
+    setStatus(
+      error.message || 'Unable to start camera.',
+      true
+    );
+
+  }
+
+}
+
+
+// ==================================================
+// STOP CAMERA
+// ==================================================
+
+function stopCamera() {
+
+  if (stream) {
+
+    stream.getTracks().forEach(track => track.stop());
+
+    stream = null;
+
+  }
+
+  video.pause();
+
+  video.srcObject = null;
+
+  verifyButton.disabled = true;
+
+}
+
+
+// ==================================================
+// LOAD FACE MODEL
+// ==================================================
+
+async function loadModel() {
+
+  if (humanModel) return;
+
+  if (typeof Human === 'undefined') {
+
+    throw new Error(
+      'Facial-recognition library failed to load. Refresh the page.'
+    );
+
+  }
+
+  humanModel = new Human({
+
+    backend: 'webgl',
+
+    modelBasePath:
+      'https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/models/',
+
+    face: {
+
+      enabled: true,
+
+      detector: {
+        rotation: true,
+        return: true
+      },
+
+      mesh: {
+        enabled: true
+      },
+
+      description: {
+        enabled: true
+      }
+
+    },
+
+    body: { enabled: false },
+    hand: { enabled: false },
+    object: { enabled: false },
+    gesture: { enabled: false }
+
+  });
+
+  await humanModel.load();
+
+  await humanModel.warmup();
+
+}
+
+
+// ==================================================
+// CAPTURE FACE
+// ==================================================
+
+async function captureFace() {
+
+  if (!stream) {
+
+    throw new Error('Start the camera first.');
+
+  }
+
+  const result = await humanModel.detect(video);
+
+  if (!result.face || result.face.length !== 1) {
+
+    throw new Error(
+      'Please ensure exactly one face is visible.'
+    );
+
+  }
+
+  const face = result.face[0];
+
+  if (!face.embedding || face.embedding.length < 64) {
+
+    throw new Error(
+      'Face descriptor unavailable. Improve lighting and try again.'
+    );
+
+  }
+
+  const descriptor = Array.from(
+    face.embedding,
+    Number
+  );
+
+  if (descriptor.some(v => !Number.isFinite(v))) {
+
+    throw new Error('Invalid face descriptor.');
+
+  }
+
+  const yaw = Number(
+    face.rotation &&
+    face.rotation.angle &&
+    face.rotation.angle.yaw || 0
+  );
+
+  return {
+    descriptor: descriptor,
+    yaw: yaw
+  };
+
+}
+
+
+// ==================================================
+// RETURN RESULT TO HR PAGE
+// ==================================================
+
+function returnResult(payload) {
+
+  if (!window.opener || window.opener.closed) {
+
+    throw new Error(
+      'The original HR page is no longer available.'
+    );
+
+  }
+
+  window.opener.postMessage(
+
+    {
+      type: 'AFH_FACE_RESULT',
+      payload: payload
+    },
+
+    '*'
+
+  );
+
+  setStatus(
+    'Verification data sent to the HR page. You may return to that tab.'
+  );
+
+  stopCamera();
+
+}
+
+
+// ==================================================
+// FACE REGISTRATION
+// ==================================================
+
+async function registerFace() {
+
+  setStatus('Capturing your face...');
+
+  const first = await captureFace();
+
+  await new Promise(resolve => setTimeout(resolve, 800));
+
+  const second = await captureFace();
+
+  if (
+    first.descriptor.length !== second.descriptor.length
+  ) {
+
+    throw new Error('Face descriptor dimensions do not match.');
+
+  }
+
+  const average = first.descriptor.map(
+    (value, index) =>
+      (value + second.descriptor[index]) / 2
+  );
+
+  returnResult({
+
+    mode: 'register',
+
+    descriptor: average
+
+  });
+
+}
+
+
+// ==================================================
+// FACIAL ATTENDANCE
+// ==================================================
+
+async function verifyAttendance() {
+
+  setStatus(
+    'Look straight ahead. Slowly turn your head left or right...'
+  );
+
+  const first = await captureFace();
+
+  await new Promise(resolve => setTimeout(resolve, 1200));
+
+  setStatus(
+    'Return your face towards the camera...'
+  );
+
+  const second = await captureFace();
+
+  const yawChange = Math.abs(first.yaw - second.yaw);
+
+  const challengePassed = yawChange >= 0.04;
+
+  if (!challengePassed) {
+
+    throw new Error(
+      'Head movement was not detected. Please try again.'
+    );
+
+  }
+
+  returnResult({
+
+    mode: 'attendance',
+
+    action: ACTION,
+
+    descriptor: second.descriptor,
+
+    challengePassed: true
+
+  });
+
+}
+
+
+// ==================================================
+// MAIN VERIFICATION BUTTON
+// ==================================================
+
+async function runVerification() {
+
+  if (busy) return;
+
+  busy = true;
+
+  verifyButton.disabled = true;
+
+  try {
+
+    if (MODE === 'register') {
+
+      await registerFace();
+
+    } else if (MODE === 'attendance') {
+
+      await verifyAttendance();
+
+    }
+
+  } catch (error) {
+
+    setStatus(
+      error.message || 'Facial verification failed.',
+      true
+    );
+
+    verifyButton.disabled = false;
+
+  } finally {
+
+    busy = false;
+
+  }
+
+}
+
+
+// ==================================================
+// BUTTON EVENTS
+// ==================================================
+
+startButton.addEventListener('click', startCamera);
+
+verifyButton.addEventListener('click', runVerification);
+
+stopButton.addEventListener('click', stopCamera);
+
+window.addEventListener('beforeunload', stopCamera);
+
+
+// ==================================================
+// INITIALISE
+// ==================================================
+
+if (checkRequest()) {
+
+  if (MODE === 'register') {
+
+    document.getElementById('instructions').textContent =
+      'Register your face for Aunty Fajar Harapan attendance.';
+
+    verifyButton.textContent = 'Capture My Face';
+
+  } else {
+
+    document.getElementById('instructions').textContent =
+      'Facial verification for ' + ACTION + '.';
+
+    verifyButton.textContent = 'Verify and Continue';
+
+  }
+
+  setStatus(
+    'Click Start Camera to begin facial verification.'
+  );
+
+}
+
+</script>
+
+</body>
+</html>
+
