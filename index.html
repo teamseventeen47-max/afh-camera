@@ -125,24 +125,46 @@
     // VALIDATE REQUEST
     // ==========================================
 
-    function validateRequest() {
-      if (!['register', 'attendance'].includes(MODE)) {
-        throw new Error('Invalid verification mode.');
-      }
+   
+function validateRequest() {
+  if (!['register', 'attendance'].includes(MODE)) {
+    throw new Error('Invalid verification mode.');
+  }
 
-      if (!ALLOWED_PARENT_ORIGINS.includes(PARENT_ORIGIN)) {
-        throw new Error('Untrusted parent application.');
-      }
+  // Validate the Google Apps Script parent origin.
+  let parentUrl;
 
-      if (MODE === 'attendance' &&
-          !['Clock In', 'Clock Out'].includes(ACTION)) {
-        throw new Error('Invalid attendance action.');
-      }
+  try {
+    parentUrl = new URL(PARENT_ORIGIN);
+  } catch (error) {
+    throw new Error('Invalid parent application address.');
+  }
 
-      if (!window.opener || window.opener.closed) {
-        throw new Error('Original HR window is unavailable.');
-      }
-    }
+  const parentHost = parentUrl.hostname;
+
+  const trustedParent =
+    parentUrl.protocol === 'https:' &&
+    (
+      parentHost === 'script.google.com' ||
+      parentHost === 'script.googleusercontent.com' ||
+      parentHost.endsWith('.script.googleusercontent.com')
+    );
+
+  if (!trustedParent) {
+    throw new Error('Untrusted parent application.');
+  }
+
+  if (!window.opener || window.opener.closed) {
+    throw new Error('Original HR window is unavailable.');
+  }
+
+  if (
+    MODE === 'attendance' &&
+    !['Clock In', 'Clock Out'].includes(ACTION)
+  ) {
+    throw new Error('Invalid attendance action.');
+  }
+}
 
     // ==========================================
     // STATUS
