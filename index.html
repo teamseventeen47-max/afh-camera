@@ -4,10 +4,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AFH Facial Verification</title>
+  <title>Aunty Fajar Harapan - Facial Verification</title>
 
   <style>
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
     body {
       margin: 0;
@@ -27,14 +29,23 @@
       border-radius: 16px;
     }
 
-    h1 { color: #e53935; }
+    h1 {
+      color: #e53935;
+    }
+
+    h2 {
+      margin-bottom: 20px;
+    }
 
     video {
+      display: block;
       width: 100%;
       max-width: 520px;
+      height: 300px;
+      object-fit: cover;
       background: #000;
       border-radius: 12px;
-      margin-top: 15px;
+      margin: 20px auto 12px;
     }
 
     button {
@@ -49,7 +60,7 @@
     }
 
     button:disabled {
-      opacity: .5;
+      opacity: 0.5;
       cursor: not-allowed;
     }
 
@@ -67,12 +78,27 @@
       font-size: 13px;
       line-height: 1.6;
     }
+
+    .loading {
+      color: #ffcc80;
+    }
+
+    .success {
+      color: #81c784;
+    }
+
+    .error {
+      color: #ef5350;
+    }
   </style>
 </head>
 
 <body>
+
   <div class="container">
-    <h1>AUNY FAJAR HARAPAN</h1>
+
+    <h1>AUNTY FAJAR HARAPAN</h1>
+
     <h2>Facial Verification</h2>
 
     <p class="hint">
@@ -80,396 +106,932 @@
       Follow the instructions displayed on screen.
     </p>
 
-    <video id="video" autoplay muted playsinline></video>
+    <video
+      id="video"
+      autoplay
+      muted
+      playsinline>
+    </video>
 
     <div>
-      <button id="startButton">Start Camera</button>
-      <button id="captureButton" disabled>Capture Face</button>
-      <button id="cancelButton">Close</button>
+      <button id="startButton">
+        Start Camera
+      </button>
+
+      <button id="captureButton" disabled>
+        Capture Face
+      </button>
+
+      <button id="cancelButton">
+        Close
+      </button>
     </div>
 
-    <div id="status">Preparing camera...</div>
+    <div id="status">
+      Preparing facial verification...
+    </div>
+
   </div>
 
+  <!-- Facial recognition library -->
   <script src="https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/dist/human.js"></script>
 
   <script>
+
     // ==========================================
     // CONFIGURATION
     // ==========================================
 
-    const ALLOWED_PARENT_ORIGINS = [
-      'https://script.google.com',
-      'https://script.googleusercontent.com'
-    ];
-
     const params = new URLSearchParams(location.search);
 
     const MODE = params.get('mode');
+
     const ACTION = params.get('action') || '';
+
     const PARENT_ORIGIN = params.get('parentOrigin');
 
     const video = document.getElementById('video');
+
     const statusBox = document.getElementById('status');
+
     const startButton = document.getElementById('startButton');
+
     const captureButton = document.getElementById('captureButton');
+
     const cancelButton = document.getElementById('cancelButton');
 
+
     let stream = null;
+
     let human = null;
 
     let firstDescriptor = null;
+
     let firstYaw = null;
+
+    let cameraStarting = false;
+
+    let resultSent = false;
+
+
+    // ==========================================
+    // STATUS MESSAGE
+    // ==========================================
+
+    function setStatus(message, type) {
+
+      statusBox.textContent = message;
+
+      statusBox.className = type || '';
+
+    }
+
 
     // ==========================================
     // VALIDATE REQUEST
     // ==========================================
 
-   
-function validateRequest() {
-  if (!['register', 'attendance'].includes(MODE)) {
-    throw new Error('Invalid verification mode.');
-  }
+    function validateRequest() {
 
-  // Validate the Google Apps Script parent origin.
-  let parentUrl;
+      if (!['register', 'attendance'].includes(MODE)) {
 
-  try {
-    parentUrl = new URL(PARENT_ORIGIN);
-  } catch (error) {
-    throw new Error('Invalid parent application address.');
-  }
+        throw new Error(
+          'Invalid verification mode. Please open this page from the HR module.'
+        );
 
-  const parentHost = parentUrl.hostname;
+      }
 
-  const trustedParent =
-    parentUrl.protocol === 'https:' &&
-    (
-      parentHost === 'script.google.com' ||
-      parentHost === 'script.googleusercontent.com' ||
-      parentHost.endsWith('.script.googleusercontent.com')
-    );
 
-  if (!trustedParent) {
-    throw new Error('Untrusted parent application.');
-  }
+      // Validate the parent URL.
 
-  if (!window.opener || window.opener.closed) {
-    throw new Error('Original HR window is unavailable.');
-  }
+      let parentUrl;
 
-  if (
-    MODE === 'attendance' &&
-    !['Clock In', 'Clock Out'].includes(ACTION)
-  ) {
-    throw new Error('Invalid attendance action.');
-  }
-}
+      try {
 
-    // ==========================================
-    // STATUS
-    // ==========================================
+        parentUrl = new URL(PARENT_ORIGIN);
 
-    function setStatus(message) {
-      statusBox.textContent = message;
+      } catch (error) {
+
+        throw new Error(
+          'Invalid HR application address.'
+        );
+
+      }
+
+
+      const parentHost = parentUrl.hostname.toLowerCase();
+
+
+      // Accept recognised Google Apps Script origins.
+
+      const trustedParent =
+
+        parentUrl.protocol === 'https:' &&
+
+        (
+
+          parentHost === 'script.google.com' ||
+
+          parentHost === 'script.googleusercontent.com' ||
+
+          parentHost.endsWith('.script.googleusercontent.com') ||
+
+          parentHost.endsWith('-script.googleusercontent.com')
+
+        );
+
+
+      if (!trustedParent) {
+
+        throw new Error(
+          'Untrusted parent application. Please check the HR application connection.'
+        );
+
+      }
+
+
+      if (!window.opener || window.opener.closed) {
+
+        throw new Error(
+          'Original HR window is unavailable. Please reopen the camera from HR.'
+        );
+
+      }
+
+
+      if (
+
+        MODE === 'attendance' &&
+
+        !['Clock In', 'Clock Out'].includes(ACTION)
+
+      ) {
+
+        throw new Error(
+          'Invalid attendance action.'
+        );
+
+      }
+
     }
 
+
     // ==========================================
-    // LOAD FACE MODEL
+    // LOAD FACIAL RECOGNITION MODEL
     // ==========================================
 
     async function loadModel() {
-      if (human) return human;
 
-      if (typeof Human === 'undefined') {
-        throw new Error('Facial recognition library failed to load.');
+      if (human) {
+
+        return human;
+
       }
 
-      setStatus('Loading facial recognition model...');
+
+      if (typeof Human === 'undefined') {
+
+        throw new Error(
+          'Facial recognition library failed to load. Check your internet connection and refresh.'
+        );
+
+      }
+
+
+      setStatus(
+        'Loading facial recognition model. Please wait...',
+        'loading'
+      );
+
 
       human = new Human({
+
         backend: 'webgl',
 
         modelBasePath:
           'https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/models/',
 
         face: {
+
           enabled: true,
 
           detector: {
+
             rotation: true,
+
             return: true
+
           },
 
           mesh: {
+
             enabled: true
+
           },
 
           description: {
+
             enabled: true
+
           }
+
         },
 
-        body: { enabled: false },
-        hand: { enabled: false },
-        object: { enabled: false },
-        gesture: { enabled: false }
+        body: {
+
+          enabled: false
+
+        },
+
+        hand: {
+
+          enabled: false
+
+        },
+
+        object: {
+
+          enabled: false
+
+        },
+
+        gesture: {
+
+          enabled: false
+
+        }
+
       });
 
+
       await human.load();
+
       await human.warmup();
 
+
       return human;
+
     }
 
+
     // ==========================================
-    // START CAMERA
+    // START CAMERA AUTOMATICALLY
     // ==========================================
 
     async function startCamera() {
+
+      if (cameraStarting || stream) {
+
+        return;
+
+      }
+
+
+      cameraStarting = true;
+
+      startButton.disabled = true;
+
+
       try {
-        if (!navigator.mediaDevices ||
-            !navigator.mediaDevices.getUserMedia) {
-          throw new Error('Camera access is unavailable.');
-        }
 
         validateRequest();
 
-        setStatus('Requesting camera permission...');
+
+        if (
+
+          !navigator.mediaDevices ||
+
+          !navigator.mediaDevices.getUserMedia
+
+        ) {
+
+          throw new Error(
+            'Camera access is unavailable. Please use the latest version of Chrome over HTTPS.'
+          );
+
+        }
+
+
+        setStatus(
+          'Requesting camera permission. Please allow camera access when Chrome asks.',
+          'loading'
+        );
+
+
+        // Request webcam access.
 
         stream = await navigator.mediaDevices.getUserMedia({
+
           video: {
+
             facingMode: 'user',
-            width: { ideal: 640 },
-            height: { ideal: 480 }
+
+            width: {
+
+              ideal: 640
+
+            },
+
+            height: {
+
+              ideal: 480
+
+            }
+
           },
+
           audio: false
+
         });
 
+
         video.srcObject = stream;
+
+
         await video.play();
+
+
+        setStatus(
+          'Camera connected. Loading facial recognition...',
+          'loading'
+        );
+
+
+        // Load facial recognition model.
 
         await loadModel();
 
+
         captureButton.disabled = false;
 
-        setStatus(
-          MODE === 'register'
-            ? 'Camera ready. Press Capture Face to register.'
-            : 'Camera ready. Press Capture Face to verify attendance.'
-        );
+        startButton.disabled = true;
+
+
+        if (MODE === 'register') {
+
+          setStatus(
+            'Camera ready! Position your face and press Capture Face to register.',
+            'success'
+          );
+
+        } else {
+
+          setStatus(
+            'Camera ready! Position your face and press Capture Face to verify ' +
+            ACTION + '.',
+            'success'
+          );
+
+        }
+
 
       } catch (error) {
+
         stopCamera();
-        setStatus(error.message || 'Unable to start camera.');
+
+
+        let message = error.message || 'Unable to start camera.';
+
+
+        if (error.name === 'NotAllowedError') {
+
+          message =
+            'Camera permission was denied. Please allow camera access for this website in Chrome settings.';
+
+        } else if (error.name === 'NotFoundError') {
+
+          message =
+            'No camera was found on this device.';
+
+        } else if (error.name === 'NotReadableError') {
+
+          message =
+            'Camera is being used by another application. Close other camera applications and try again.';
+
+        } else if (error.name === 'OverconstrainedError') {
+
+          message =
+            'The requested camera settings are unavailable.';
+
+        }
+
+
+        setStatus(
+          'Camera error: ' + message,
+          'error'
+        );
+
+
+        startButton.disabled = false;
+
+      } finally {
+
+        cameraStarting = false;
+
       }
+
     }
+
 
     // ==========================================
     // STOP CAMERA
     // ==========================================
 
     function stopCamera() {
+
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+
+        stream.getTracks().forEach(function(track) {
+
+          track.stop();
+
+        });
+
         stream = null;
+
       }
 
+
       video.pause();
+
       video.srcObject = null;
 
+
       captureButton.disabled = true;
+
     }
+
 
     // ==========================================
     // CAPTURE FACE
     // ==========================================
 
     async function captureFace() {
+
       if (!stream || !human) {
-        throw new Error('Start the camera first.');
+
+        throw new Error(
+          'Camera is not ready. Please start the camera first.'
+        );
+
       }
 
+
       if (video.readyState < 2 || !video.videoWidth) {
-        throw new Error('Camera is not ready.');
+
+        throw new Error(
+          'Camera is still loading. Please wait.'
+        );
+
       }
+
 
       const result = await human.detect(video);
 
+
       if (!result.face || result.face.length !== 1) {
-        throw new Error('Please ensure exactly one face is visible.');
+
+        throw new Error(
+          'Please ensure exactly one face is visible in the camera.'
+        );
+
       }
+
 
       const face = result.face[0];
 
+
       if (!face.embedding || face.embedding.length < 64) {
-        throw new Error('Unable to capture face descriptor.');
+
+        throw new Error(
+          'Unable to capture face descriptor. Please adjust your position.'
+        );
+
       }
 
-      const descriptor = Array.from(face.embedding, Number);
 
-      if (descriptor.some(value => !Number.isFinite(value))) {
-        throw new Error('Invalid face descriptor.');
-      }
-
-      const yaw = Number(
-        face.rotation &&
-        face.rotation.angle &&
-        face.rotation.angle.yaw || 0
+      const descriptor = Array.from(
+        face.embedding,
+        Number
       );
 
+
+      if (
+
+        descriptor.some(function(value) {
+
+          return !Number.isFinite(value);
+
+        })
+
+      ) {
+
+        throw new Error(
+          'Invalid face descriptor. Please try again.'
+        );
+
+      }
+
+
+      const yaw = Number(
+
+        face.rotation &&
+
+        face.rotation.angle &&
+
+        face.rotation.angle.yaw || 0
+
+      );
+
+
       return {
+
         descriptor: descriptor,
+
         yaw: yaw
+
       };
+
     }
+
 
     // ==========================================
     // SEND RESULT TO HR WINDOW
     // ==========================================
 
     function returnResult(payload) {
+
+      if (resultSent) {
+
+        throw new Error(
+          'Verification result has already been sent.'
+        );
+
+      }
+
+
       validateRequest();
 
+
       window.opener.postMessage(
+
         {
+
           type: 'AFH_FACE_RESULT',
+
           payload: payload
+
         },
+
         PARENT_ORIGIN
+
       );
+
+
+      resultSent = true;
+
 
       setStatus(
-        'Verification data sent successfully. Return to your HR page.'
+        'Verification data sent successfully. You may return to your HR page.',
+        'success'
       );
 
+
       stopCamera();
+
       startButton.disabled = true;
+
       captureButton.disabled = true;
+
     }
+
 
     // ==========================================
     // REGISTER FACE
     // ==========================================
 
     async function registerFace() {
-      setStatus('Capturing face for registration...');
+
+      setStatus(
+        'Registration: capturing your first face image...',
+        'loading'
+      );
+
 
       const first = await captureFace();
 
-      await new Promise(resolve => setTimeout(resolve, 800));
+
+      await new Promise(function(resolve) {
+
+        setTimeout(resolve, 800);
+
+      });
+
+
+      setStatus(
+        'Capturing your second face image...',
+        'loading'
+      );
+
 
       const second = await captureFace();
 
-      if (first.descriptor.length !== second.descriptor.length) {
-        throw new Error('Face descriptor dimensions do not match.');
+
+      if (
+
+        first.descriptor.length !==
+
+        second.descriptor.length
+
+      ) {
+
+        throw new Error(
+          'Face descriptor dimensions do not match.'
+        );
+
       }
 
+
+      // Average the two face descriptors.
+
       const average = first.descriptor.map(
-        (value, index) =>
-          (value + second.descriptor[index]) / 2
+
+        function(value, index) {
+
+          return (
+
+            value + second.descriptor[index]
+
+          ) / 2;
+
+        }
+
       );
 
+
       returnResult({
+
         mode: 'register',
+
         descriptor: average
+
       });
+
     }
+
 
     // ==========================================
     // ATTENDANCE VERIFICATION
     // ==========================================
 
     async function attendanceVerification() {
+
+
+      // FIRST CAPTURE
+
       if (!firstDescriptor) {
+
         setStatus(
-          'Look straight at the camera. Capturing your first image...'
+          'Look straight at the camera. Capturing your first image...',
+          'loading'
         );
+
 
         const first = await captureFace();
 
+
         firstDescriptor = first.descriptor;
+
         firstYaw = first.yaw;
 
+
         setStatus(
-          'Now slowly turn your head left or right, then press Capture Face again.'
+          'First image captured. Now slowly turn your head left or right and press Capture Face again.',
+          'success'
         );
 
+
         return;
+
       }
 
-      setStatus('Capturing second image...');
+
+      // SECOND CAPTURE
+
+      setStatus(
+        'Capturing your second image. Please wait...',
+        'loading'
+      );
+
 
       const second = await captureFace();
 
-      const yawChange = Math.abs(firstYaw - second.yaw);
+
+      const yawChange = Math.abs(
+
+        firstYaw - second.yaw
+
+      );
+
 
       const challengePassed = yawChange >= 0.04;
 
+
       if (!challengePassed) {
+
         firstDescriptor = null;
+
         firstYaw = null;
 
+
         throw new Error(
-          'Head movement was not detected. Please try again.'
+          'Head movement was not detected. Please look straight and try again.'
         );
+
       }
 
+
       returnResult({
+
         mode: 'attendance',
+
         action: ACTION,
+
         descriptor: second.descriptor,
+
         challengePassed: true
+
       });
+
     }
+
 
     // ==========================================
     // BUTTON EVENTS
     // ==========================================
 
-    startButton.addEventListener('click', startCamera);
+    startButton.addEventListener(
 
-    captureButton.addEventListener('click', async function() {
-      captureButton.disabled = true;
+      'click',
+
+      startCamera
+
+    );
+
+
+    captureButton.addEventListener(
+
+      'click',
+
+      async function() {
+
+        captureButton.disabled = true;
+
+
+        try {
+
+          if (MODE === 'register') {
+
+            await registerFace();
+
+          } else {
+
+            await attendanceVerification();
+
+          }
+
+
+        } catch (error) {
+
+          setStatus(
+
+            error.message || 'Face capture failed.',
+
+            'error'
+
+          );
+
+
+          if (MODE === 'attendance' && !resultSent) {
+
+            // Allow the user to retry the head movement challenge.
+
+            if (error.message && error.message.includes('Head movement')) {
+
+              firstDescriptor = null;
+
+              firstYaw = null;
+
+            }
+
+          }
+
+
+        } finally {
+
+          if (stream && !resultSent) {
+
+            captureButton.disabled = false;
+
+          }
+
+        }
+
+      }
+
+    );
+
+
+    // ==========================================
+    // CLOSE CAMERA WINDOW
+    // ==========================================
+
+    cancelButton.addEventListener(
+
+      'click',
+
+      function() {
+
+        stopCamera();
+
+        window.close();
+
+      }
+
+    );
+
+
+    window.addEventListener(
+
+      'beforeunload',
+
+      stopCamera
+
+    );
+
+
+    // ==========================================
+    // INITIALISE APPLICATION
+    // ==========================================
+
+    async function initialiseApplication() {
 
       try {
+
+        validateRequest();
+
+
         if (MODE === 'register') {
-          await registerFace();
+
+          setStatus(
+            'Face registration started. Preparing your camera...',
+            'loading'
+          );
+
         } else {
-          await attendanceVerification();
+
+          setStatus(
+            ACTION + ' verification started. Preparing your camera...',
+            'loading'
+          );
+
         }
+
+
+        // Automatically start the camera.
+
+        await startCamera();
+
+
       } catch (error) {
-        setStatus(error.message || 'Face capture failed.');
-      } finally {
-        if (stream) {
-          captureButton.disabled = false;
-        }
+
+        setStatus(
+
+          error.message || 'Unable to initialise facial verification.',
+
+          'error'
+
+        );
+
+
+        startButton.disabled = true;
+
       }
-    });
 
-    cancelButton.addEventListener('click', function() {
-      stopCamera();
-      window.close();
-    });
-
-    window.addEventListener('beforeunload', stopCamera);
-
-    // ==========================================
-    // INITIALISE
-    // ==========================================
-
-    try {
-      validateRequest();
-
-      setStatus(
-        MODE === 'register'
-          ? 'Ready to register your face.'
-          : 'Ready for attendance verification: ' + ACTION
-      );
-    } catch (error) {
-      setStatus(error.message);
-      startButton.disabled = true;
     }
+
+
+    // Start after the page has loaded.
+
+    window.addEventListener(
+
+      'load',
+
+      initialiseApplication
+
+    );
+
   </script>
+
 </body>
 </html>
