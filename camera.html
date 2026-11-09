@@ -6,130 +6,253 @@
   <title>AFH Secure Facial Camera</title>
 
   <style>
-    *{box-sizing:border-box}
-    body{
-      margin:0;
-      padding:18px;
-      background:#f3f6f3;
-      color:#20352d;
-      font-family:Arial,sans-serif
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 18px;
+      background: #101010;
+      color: #fff;
+      font-family: Arial, sans-serif;
     }
-    main{
-      max-width:520px;
-      margin:auto;
-      background:#fff;
-      border:1px solid #e1e9e2;
-      border-radius:14px;
-      padding:18px
+
+    main {
+      max-width: 520px;
+      margin: auto;
+      padding: 20px;
+      background: #1b1b1b;
+      border: 1px solid #383838;
+      border-radius: 14px;
     }
-    h2{margin:0 0 8px}
-    p{font-size:14px;color:#64736b;line-height:1.45}
-    video{
-      width:100%;
-      min-height:260px;
-      background:#17251e;
-      border-radius:12px;
-      object-fit:cover
+
+    h2 {
+      margin: 0 0 10px;
+      color: #ef4444;
     }
-    button{
-      border:0;
-      border-radius:8px;
-      padding:12px 16px;
-      background:#14513f;
-      color:#fff;
-      font-weight:bold;
-      margin:10px 8px 0 0;
-      cursor:pointer
+
+    p {
+      color: #bdbdbd;
+      font-size: 14px;
+      line-height: 1.5;
     }
-    button.alt{background:#e8efea;color:#14513f}
-    .notice{
-      margin-top:12px;
-      padding:11px;
-      border-radius:8px;
-      background:#eaf3ed;
-      color:#14513f;
-      font-size:13px;
-      white-space:pre-wrap
+
+    video {
+      display: block;
+      width: 100%;
+      min-height: 260px;
+      background: #000;
+      border: 1px solid #383838;
+      border-radius: 12px;
+      object-fit: cover;
     }
-    .error{background:#fff0ef;color:#b42318}
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      background: #c62828;
+      color: #fff;
+      font-weight: bold;
+      margin: 10px 8px 0 0;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    button.alt {
+      background: #333;
+      color: #fff;
+    }
+
+    .notice {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #292929;
+      color: #eee;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .error {
+      background: #421b1b;
+      color: #ffaaaa;
+    }
+
+    .success {
+      background: #18351f;
+      color: #a5e6b0;
+    }
+
+    .hint {
+      color: #aaa;
+      font-size: 13px;
+    }
   </style>
 </head>
 
 <body>
   <main>
-    <h2>Aunty Fajar Harapan</h2>
+    <h2>AUNTY FAJAR HARAPAN</h2>
 
     <p>
       Facial verification for the AFH AIS attendance workflow.
-      This page generates a face descriptor and does not upload or
-      store a face photograph.
+      This page generates a face descriptor and does not upload
+      or store a face photograph.
     </p>
 
     <video id="video" autoplay muted playsinline></video>
 
     <div id="status" class="notice">
-      Opening camera automatically…
+      Opening camera automatically...
     </div>
 
-    <!-- These controls remain available as a manual fallback. -->
-    <button id="start">Start Camera</button>
-    <button id="stop" class="alt">Stop Camera</button>
+    <button id="stop" class="alt" type="button">
+      Stop Camera
+    </button>
 
-    <p id="instruction">
+    <p class="hint">
       Keep your face centred and well lit. Follow the head-movement
-      instruction when requested.
+      instruction when requested. Facial verification must finish
+      before attendance can be recorded.
     </p>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/human/dist/human.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/dist/human.js"></script>
 
   <script>
-    const APPS_SCRIPT_ORIGIN = 'https://script.google.com';
+    'use strict';
+
+    // ==========================================
+    // CONFIGURATION
+    // ==========================================
+
+    const video = document.getElementById('video');
+    const statusBox = document.getElementById('status');
 
     let stream = null;
     let humanModel = null;
     let busy = false;
     let cameraStarting = false;
+    let resultSent = false;
 
-    const status = (message, bad = false) => {
-      const element = document.getElementById('status');
-      element.textContent = message;
-      element.className = 'notice' + (bad ? ' error' : '');
-    };
+    // ==========================================
+    // STATUS
+    // ==========================================
 
-    function send(type, extra = {}) {
-      if (window.opener && !window.opener.closed) {
-        window.opener.postMessage(
-          { type, ...extra },
-          APPS_SCRIPT_ORIGIN
+    function setStatus(message, type) {
+      statusBox.textContent = message;
+      statusBox.className = 'notice' + (type ? ' ' + type : '');
+    }
+
+    // ==========================================
+    // VALIDATE THE HR WINDOW
+    // ==========================================
+
+    function isTrustedHRWindow(event) {
+      if (!window.opener || window.opener.closed) return false;
+
+      if (event.source !== window.opener) return false;
+
+      try {
+        const url = new URL(event.origin);
+
+        if (url.protocol !== 'https:') return false;
+
+        const host = url.hostname.toLowerCase();
+
+        return (
+          host === 'script.google.com' ||
+          host === 'script.googleusercontent.com' ||
+          host.endsWith('.script.googleusercontent.com') ||
+          host.endsWith('-script.googleusercontent.com')
         );
+
+      } catch (error) {
+        return false;
       }
     }
+
+    // ==========================================
+    // SEND MESSAGE TO HR
+    // ==========================================
+
+    function send(type, extra) {
+      if (!window.opener || window.opener.closed) {
+        setStatus(
+          'The original HR page is unavailable. Please reopen facial verification.',
+          'error'
+        );
+        return false;
+      }
+
+      try {
+        // The HR page validates both the sender's origin
+        // and the exact popup window. Wildcard delivery
+        // avoids Google Apps Script redirect-origin mismatch.
+        window.opener.postMessage(
+          Object.assign({ type: type }, extra || {}),
+          '*'
+        );
+
+        return true;
+
+      } catch (error) {
+        setStatus(
+          'Unable to communicate with the HR page: ' +
+          (error.message || error),
+          'error'
+        );
+
+        return false;
+      }
+    }
+
+    // ==========================================
+    // LOAD FACIAL RECOGNITION MODEL
+    // ==========================================
 
     async function loadModel() {
       if (humanModel) return humanModel;
 
-      const C =
-        (window.Human && typeof window.Human.Human === 'function')
-          ? window.Human.Human
-          : (typeof window.Human === 'function' ? window.Human : null);
-
-      if (!C) {
+      if (
+        !window.Human ||
+        typeof window.Human.Human !== 'function'
+      ) {
         throw new Error(
-          'Facial recognition library did not load. Check internet access and refresh.'
+          'Facial recognition library did not load. Check your internet connection and refresh.'
         );
       }
 
-      humanModel = new C({
+      setStatus('Loading facial recognition models...');
+
+      humanModel = new window.Human.Human({
         backend: 'webgl',
-        modelBasePath: 'https://cdn.jsdelivr.net/npm/@vladmandic/human/models/',
+
+        modelBasePath:
+          'https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.6/models/',
+
         face: {
           enabled: true,
-          detector: { rotation: true, return: true },
-          description: { enabled: true },
-          mesh: { enabled: true },
-          antispoof: { enabled: true }
+          detector: {
+            rotation: true,
+            return: true
+          },
+          mesh: {
+            enabled: true
+          },
+          description: {
+            enabled: true
+          },
+          antispoof: {
+            enabled: true
+          }
         },
+
         body: { enabled: false },
         hand: { enabled: false },
         object: { enabled: false },
@@ -142,22 +265,32 @@
       return humanModel;
     }
 
-    async function start() {
-      if (stream || cameraStarting) return;
+    // ==========================================
+    // START CAMERA AUTOMATICALLY
+    // ==========================================
+
+    async function startCamera() {
+      if (cameraStarting || stream) return;
 
       cameraStarting = true;
 
       try {
+        if (!window.opener || window.opener.closed) {
+          throw new Error(
+            'The HR page is unavailable. Open this camera through the HR page.'
+          );
+        }
+
         if (
           !navigator.mediaDevices ||
           !navigator.mediaDevices.getUserMedia
         ) {
           throw new Error(
-            'Camera API is unavailable. Open this page using HTTPS in Chrome.'
+            'Camera access is unavailable. Please use Chrome over HTTPS.'
           );
         }
 
-        status('Requesting camera access…');
+        setStatus('Requesting camera permission...');
 
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -168,26 +301,42 @@
           audio: false
         });
 
-        const video = document.getElementById('video');
         video.srcObject = stream;
         await video.play();
 
-        status('Camera is running. Loading facial-recognition model…');
+        setStatus('Camera connected. Preparing facial recognition...');
 
         await loadModel();
 
-        status('Camera ready. Facial capture will begin automatically.');
-
-        send('AFH_CAMERA_READY');
-
-      } catch (error) {
-        status(
-          'Could not start camera: ' + (error.message || error),
-          true
+        setStatus(
+          'Camera ready. Facial capture will begin automatically.',
+          'success'
         );
 
+        // Notify HR. HR will send the pending capture request.
+        if (!send('AFH_CAMERA_READY')) {
+          throw new Error(
+            'The camera could not notify the HR page that it is ready.'
+          );
+        }
+
+      } catch (error) {
+        stopTracksOnly();
+
+        let message = error.message || String(error);
+
+        if (error.name === 'NotAllowedError') {
+          message = 'Camera permission denied. Allow camera access in Chrome.';
+        } else if (error.name === 'NotFoundError') {
+          message = 'No camera was found on this device.';
+        } else if (error.name === 'NotReadableError') {
+          message = 'The camera is being used by another application.';
+        }
+
+        setStatus('Camera error: ' + message, 'error');
+
         send('AFH_CAMERA_ERROR', {
-          message: error.message || String(error)
+          message: message
         });
 
       } finally {
@@ -195,9 +344,16 @@
       }
     }
 
+    // ==========================================
+    // CAPTURE ONE FACE SAMPLE
+    // ==========================================
+
     async function captureOne() {
       const model = await loadModel();
-      const video = document.getElementById('video');
+
+      if (video.readyState < 2 || !video.videoWidth) {
+        throw new Error('Camera is still loading. Please wait.');
+      }
 
       const result = await model.detect(video);
 
@@ -209,45 +365,66 @@
 
       const face = result.face[0];
 
-      if (!face.embedding || !face.embedding.length) {
+      if (!face.embedding || face.embedding.length < 64) {
         throw new Error(
-          'Could not generate a face descriptor. Improve lighting and try again.'
+          'Unable to generate a face descriptor. Improve the lighting and try again.'
         );
       }
 
+      const descriptor = Array.from(face.embedding, Number);
+
+      if (descriptor.some(value => !Number.isFinite(value))) {
+        throw new Error('The face descriptor contains invalid values.');
+      }
+
+      const yaw = Number(
+        face.rotation &&
+        face.rotation.angle &&
+        face.rotation.angle.yaw || 0
+      );
+
       return {
-        descriptor: Array.from(face.embedding),
-        yaw: Number(
-          face.rotation &&
-          face.rotation.angle &&
-          face.rotation.angle.yaw || 0
-        )
+        descriptor: descriptor,
+        yaw: yaw
       };
     }
 
+    // ==========================================
+    // AUTOMATIC FACIAL CAPTURE
+    // ==========================================
+
     async function capture(mode) {
-      if (busy) return;
+      if (busy || resultSent) return;
+
+      if (!['register', 'attendance'].includes(mode)) {
+        setStatus('Invalid facial capture request.', 'error');
+        send('AFH_CAMERA_ERROR', {
+          message: 'Invalid facial capture mode.'
+        });
+        return;
+      }
 
       busy = true;
 
       try {
-        if (!stream) {
-          throw new Error('The camera is not running.');
+        if (!stream || !humanModel) {
+          throw new Error('The camera is not ready.');
         }
 
-        status('Position your face in the centre of the camera.');
+        setStatus('Position your face in the centre of the camera.');
 
+        // First sample
         const first = await captureOne();
 
-        status(
-          'Face detected. Now slowly turn your head left or right.'
+        setStatus(
+          'Face detected. Slowly turn your head left or right.'
         );
 
         let second = null;
         let movementDetected = false;
 
-        // Try a few samples so the employee has time to turn their head.
-        for (let attempt = 0; attempt < 4; attempt++) {
+        // Allow several attempts for the head movement.
+        for (let attempt = 0; attempt < 6; attempt++) {
           await new Promise(resolve => setTimeout(resolve, 650));
 
           second = await captureOne();
@@ -257,8 +434,8 @@
             break;
           }
 
-          status(
-            'Head movement not detected yet. Turn your head a little further.'
+          setStatus(
+            'Head movement not detected yet. Please turn your head a little further.'
           );
         }
 
@@ -275,38 +452,51 @@
             first.descriptor.length !== second.descriptor.length
           ) {
             throw new Error(
-              'Face model changed during capture. Please try again.'
+              'Face descriptor dimensions do not match. Please try again.'
             );
           }
 
-          // Average the two samples for face registration.
+          // Average the two registration samples.
           descriptor = first.descriptor.map(
             (value, index) =>
               (value + second.descriptor[index]) / 2
           );
 
         } else {
-          // Attendance verification uses the second sample,
-          // after the movement challenge.
+          // Attendance uses the sample after the movement challenge.
           descriptor = second.descriptor;
         }
 
-        send('AFH_FACE_CAPTURED', {
+        setStatus('Facial sample captured. Sending to AFH AIS...');
+
+        resultSent = true;
+
+        const delivered = send('AFH_FACE_CAPTURED', {
           descriptor: descriptor,
           challengePassed: true
         });
 
-        status(
+        if (!delivered) {
+          resultSent = false;
+          throw new Error('Unable to send the facial sample to the HR page.');
+        }
+
+        setStatus(
           mode === 'register'
-            ? 'Face sample sent to AFH AIS for registration.'
-            : 'Face sample sent to AFH AIS for verification.'
+            ? 'Face sample sent. Completing registration...'
+            : 'Face sample sent. Completing attendance verification...',
+          'success'
         );
 
       } catch (error) {
-        status(error.message || String(error), true);
+        resultSent = false;
+
+        const message = error.message || String(error);
+
+        setStatus(message, 'error');
 
         send('AFH_CAMERA_ERROR', {
-          message: error.message || String(error)
+          message: message
         });
 
       } finally {
@@ -314,15 +504,25 @@
       }
     }
 
-    function stopCamera(closeWindow = false) {
+    // ==========================================
+    // STOP CAMERA
+    // ==========================================
+
+    function stopTracksOnly() {
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
 
       stream = null;
-      document.getElementById('video').srcObject = null;
 
-      status('Camera stopped.');
+      video.pause();
+      video.srcObject = null;
+    }
+
+    function stopCamera(closeWindow) {
+      stopTracksOnly();
+
+      setStatus('Camera stopped.');
 
       send('AFH_CAMERA_STOPPED');
 
@@ -331,17 +531,19 @@
       }
     }
 
-    document.getElementById('start').addEventListener('click', start);
+    document.getElementById('stop').addEventListener(
+      'click',
+      function() {
+        stopCamera(false);
+      }
+    );
 
-    document.getElementById('stop').addEventListener('click', function() {
-      stopCamera(false);
-    });
+    // ==========================================
+    // RECEIVE COMMANDS FROM HR
+    // ==========================================
 
-    window.addEventListener('message', event => {
-      // Only accept commands from the AFH Apps Script web app.
-      if (event.origin !== APPS_SCRIPT_ORIGIN) return;
-
-      if (event.source !== window.opener) return;
+    window.addEventListener('message', function(event) {
+      if (!isTrustedHRWindow(event)) return;
 
       const data = event.data || {};
 
@@ -360,14 +562,20 @@
       }
     });
 
-    window.addEventListener('beforeunload', () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
+    // ==========================================
+    // CLEAN UP
+    // ==========================================
+
+    window.addEventListener('beforeunload', function() {
+      stopTracksOnly();
     });
 
-    // Automatically request camera access when the popup opens.
-    start();
+    // ==========================================
+    // AUTOMATIC INITIALISATION
+    // ==========================================
+
+    startCamera();
+
   </script>
 </body>
 </html>
