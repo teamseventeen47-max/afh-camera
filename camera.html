@@ -1,0 +1,392 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AFH Secure Facial Camera</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 18px;
+  background: #f3f6f3;
+  color: #20352d;
+  font-family: Arial, sans-serif;
+}
+
+main {
+  max-width: 520px;
+  margin: auto;
+  background: #ffffff;
+  border: 1px solid #e1e9e2;
+  border-radius: 14px;
+  padding: 18px;
+}
+
+h2 {
+  margin: 0 0 8px;
+}
+
+p {
+  font-size: 14px;
+  color: #64736b;
+  line-height: 1.45;
+}
+
+video {
+  width: 100%;
+  min-height: 260px;
+  background: #17251e;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  background: #14513f;
+  color: white;
+  font-weight: bold;
+  margin: 10px 8px 0 0;
+  cursor: pointer;
+}
+
+button.alt {
+  background: #e8efea;
+  color: #14513f;
+}
+
+.notice {
+  margin-top: 12px;
+  padding: 11px;
+  border-radius: 8px;
+  background: #eaf3ed;
+  color: #14513f;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.error {
+  background: #fff0ef;
+  color: #b42318;
+}
+</style>
+</head>
+
+<body>
+
+<main>
+
+<h2>Aunty Fajar Harapan</h2>
+
+<p>
+Secure facial verification. This page captures a face descriptor
+for the AFH AIS attendance workflow. It does not upload or store
+a face photograph.
+</p>
+
+<video id="video" autoplay muted playsinline></video>
+
+<div id="status" class="notice">
+Click Start Camera and allow Chrome camera access.
+</div>
+
+<button id="start">Start Camera</button>
+<button id="stop" class="alt">Stop Camera</button>
+
+<p id="instruction">
+Keep your face centred and well lit. For attendance,
+follow the head-movement instruction when requested.
+</p>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/human/dist/human.js"></script>
+
+<script>
+let stream = null;
+let humanModel = null;
+let busy = false;
+
+const status = (message, isError = false) => {
+  const element = document.getElementById('status');
+  element.textContent = message;
+  element.className = 'notice' + (isError ? ' error' : '');
+};
+
+function send(type, extra = {}) {
+  if (window.opener && !window.opener.closed) {
+    window.opener.postMessage({
+      type,
+      ...extra
+    }, '*');
+  }
+}
+
+async function loadModel() {
+  if (humanModel) return humanModel;
+
+  const HumanConstructor =
+    (window.Human && typeof window.Human.Human === 'function')
+      ? window.Human.Human
+      : ((typeof window.Human === 'function') ? window.Human : null);
+
+  if (!HumanConstructor) {
+    throw new Error(
+      'Facial recognition library did not load. Check internet access and refresh.'
+    );
+  }
+
+  humanModel = new HumanConstructor({
+    backend: 'webgl',
+
+    modelBasePath:
+      'https://cdn.jsdelivr.net/npm/@vladmandic/human/models/',
+
+    face: {
+      enabled: true,
+      detector: {
+        rotation: true,
+        return: true
+      },
+      description: {
+        enabled: true
+      },
+      mesh: {
+        enabled: true
+      },
+      antispoof: {
+        enabled: true
+      }
+    },
+
+    body: { enabled: false },
+    hand: { enabled: false },
+    object: { enabled: false },
+    gesture: { enabled: false }
+  });
+
+  await humanModel.load();
+  await humanModel.warmup();
+
+  return humanModel;
+}
+
+async function startCamera() {
+  try {
+    if (
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia
+    ) {
+      throw new Error(
+        'Camera API unavailable. Open this page using HTTPS in Chrome.'
+      );
+    }
+
+    status('Requesting camera access...');
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'user',
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      },
+      audio: false
+    });
+
+    const video = document.getElementById('video');
+
+    video.srcObject = stream;
+    await video.play();
+
+    status('Camera is running. Loading facial-recognition model...');
+
+    await loadModel();
+
+    status(
+      'Camera ready. Return to AFH AIS and click Register Face or Clock In/Out.'
+    );
+
+    send('AFH_CAMERA_READY');
+
+  } catch (error) {
+
+    status(
+      'Could not start camera: ' + (error.message || error),
+      true
+    );
+
+    send('AFH_CAMERA_ERROR', {
+      message: error.message || String(error)
+    });
+  }
+}
+
+async function captureOne() {
+  const model = await loadModel();
+  const video = document.getElementById('video');
+
+  const result = await model.detect(video);
+
+  if (!result.face || result.face.length !== 1) {
+    throw new Error(
+      'Please ensure exactly one face is visible.'
+    );
+  }
+
+  const face = result.face[0];
+
+  if (!face.embedding || !face.embedding.length) {
+    throw new Error(
+      'Could not generate a face descriptor. Improve lighting and try again.'
+    );
+  }
+
+  return {
+    descriptor: Array.from(face.embedding),
+
+    yaw: Number(
+      face.rotation &&
+      face.rotation.angle &&
+      face.rotation.angle.yaw || 0
+    )
+  };
+}
+
+async function capture(mode) {
+  if (busy) return;
+
+  busy = true;
+
+  try {
+
+    if (!stream) {
+      throw new Error('Start the camera first.');
+    }
+
+    if (mode === 'register') {
+
+      status('Keep looking straight ahead. Capturing your face twice...');
+
+      const first = await captureOne();
+
+      await new Promise(resolve => setTimeout(resolve, 700));
+
+      const second = await captureOne();
+
+      if (
+        first.descriptor.length !== second.descriptor.length
+      ) {
+        throw new Error(
+          'Face model changed during capture.'
+        );
+      }
+
+      const average = first.descriptor.map(
+        (value, index) =>
+          (value + second.descriptor[index]) / 2
+      );
+
+      send('AFH_FACE_CAPTURED', {
+        descriptor: average,
+        challengePassed: true
+      });
+
+      status('Face descriptor sent to AFH AIS for registration.');
+
+    } else {
+
+      status(
+        'Look straight ahead for the first capture...'
+      );
+
+      const first = await captureOne();
+
+      status(
+        'Now slowly turn your head left or right. Capturing the second sample shortly...'
+      );
+
+      await new Promise(resolve => setTimeout(resolve, 1100));
+
+      const second = await captureOne();
+
+      const passed =
+        Math.abs(first.yaw - second.yaw) >= 0.04;
+
+      if (!passed) {
+        throw new Error(
+          'Head movement was not detected. Turn your head more clearly and try again.'
+        );
+      }
+
+      send('AFH_FACE_CAPTURED', {
+        descriptor: second.descriptor,
+        challengePassed: true
+      });
+
+      status('Face sample sent to AFH AIS for verification.');
+    }
+
+  } catch (error) {
+
+    status(error.message || String(error), true);
+
+    send('AFH_CAMERA_ERROR', {
+      message: error.message || String(error)
+    });
+
+  } finally {
+
+    busy = false;
+  }
+}
+
+document.getElementById('start').onclick = startCamera;
+
+document.getElementById('stop').onclick = () => {
+
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+  }
+
+  stream = null;
+
+  document.getElementById('video').srcObject = null;
+
+  status('Camera stopped.');
+
+  send('AFH_CAMERA_STOPPED');
+};
+
+window.addEventListener('message', event => {
+
+  if (!event.data) return;
+
+  if (event.data.type === 'AFH_CAMERA_STOP') {
+    document.getElementById('stop').click();
+  }
+
+  if (event.data.type === 'AFH_CAPTURE_REQUEST') {
+    capture(event.data.mode);
+  }
+
+});
+
+window.addEventListener('beforeunload', () => {
+
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+  }
+
+});
+
+</script>
+
+</body>
+</html>
